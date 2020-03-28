@@ -3,15 +3,13 @@ package org.rickosborne.watermark.lambda;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.s3.event.S3EventNotification;
 import com.amazonaws.services.s3.model.S3Event;
-import java.awt.image.BufferedImage;
-import java.io.IOException;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.NonNull;
 
 @SuppressWarnings("unused")  // Used by AWS
-public class WatermarkS3EventHandler extends AWatermarkRequestHandler<com.amazonaws.services.lambda.runtime.events.S3Event, Void> {
+public class WatermarkS3EventHandler extends AWatermarkRequestHandler<com.amazonaws.services.lambda.runtime.events.S3Event> {
 	private static final Set<S3Event> S3EVENT_WHITELIST = Stream.of(
 		S3Event.ObjectCreated,
 		S3Event.ObjectCreatedByPost,
@@ -47,10 +45,14 @@ public class WatermarkS3EventHandler extends AWatermarkRequestHandler<com.amazon
 	}
 
 	@Override
-	public Void handleRequest(@NonNull final com.amazonaws.services.lambda.runtime.events.S3Event input, @NonNull final Context context) {
+	public WatermarkPostResponse handleRequest(
+		@NonNull final com.amazonaws.services.lambda.runtime.events.S3Event input,
+		@NonNull final Context context
+	) {
+		final SlackLogger slackLogger = SlackLogger.fromConfig(getDefaultConfig(), context.getLogger());
 		final WatermarkLogger logger = new WatermarkLogger(
 			context.getLogger(),
-			SlackLogger.fromConfig(getDefaultConfig(), context.getLogger())
+			slackLogger
 		);
 		final String requestId = context.getAwsRequestId();
 		for (final S3EventNotification.S3EventNotificationRecord notification : input.getRecords()) {
@@ -58,66 +60,17 @@ public class WatermarkS3EventHandler extends AWatermarkRequestHandler<com.amazon
 			logger.debug(requestConfig.toString());
 			//noinspection ConstantConditions
 			if (requestConfig != null) {
-				return handle(
-					new WatermarkRequest(
-						getDefaultConfig(),
-						logger,
-						requestConfig,
-						requestId
-					)
-				);
+				final WatermarkPostResponse response = handle(new WatermarkRequest(
+					getDefaultConfig(),
+					logger,
+					requestConfig,
+					requestId
+				));
+				if (response != null) {
+					logResponse(logger, response);
+				}
 			}
 		}
-		return null;
-	}
-
-	@Override
-	protected Void responseForFailedDestinationKey(final @NonNull WatermarkRequest request) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForFailedWrite(final WatermarkRequest request, final IOException e) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForImpossibleDestination(final @NonNull WatermarkRequest request) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForMinusculeWatermark(final @NonNull WatermarkRequest request) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForMissingBucket(final WatermarkRequest request) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForMissingSourceImage(final @NonNull WatermarkRequest request) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForMissingWatermarkImage(final @NonNull WatermarkRequest request) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForSkipped(final @NonNull WatermarkRequest request, final String destinationKey) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForSuccess(final WatermarkRequest request, final BufferedImage sourceImage, final String sourceImageFormat, final String destinationKey) {
-		return null;
-	}
-
-	@Override
-	protected Void responseForUnknownImageFormat(final BufferedImage sourceImage, final String sourceImageFormat) {
 		return null;
 	}
 }

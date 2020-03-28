@@ -1,8 +1,10 @@
 package org.rickosborne.watermark.lambda;
 
 import com.amazonaws.services.lambda.runtime.LambdaLogger;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
+@Getter
 @RequiredArgsConstructor
 public class WatermarkLogger {
 	private final LambdaLogger lambdaLogger;

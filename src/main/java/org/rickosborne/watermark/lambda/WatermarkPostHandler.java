@@ -1,13 +1,11 @@
 package org.rickosborne.watermark.lambda;
 
 import com.amazonaws.services.lambda.runtime.Context;
-import java.awt.image.BufferedImage;
-import java.io.IOException;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import lombok.NonNull;
 
-public class WatermarkPostHandler extends AWatermarkRequestHandler<WatermarkPostRequest, WatermarkPostResponse> {
+public class WatermarkPostHandler extends AWatermarkRequestHandler<WatermarkPostRequest> {
 	/**
 	 * Mostly for testing.
 	 */
@@ -16,7 +14,7 @@ public class WatermarkPostHandler extends AWatermarkRequestHandler<WatermarkPost
 		@NonNull final WatermarkImageProcessor imageProcessor,
 		@NonNull final WatermarkStore storage
 	) {
-		super(defaultConfig, imageProcessor, storage);
+		super(defaultConfig, storage, imageProcessor);
 	}
 
 	/**
@@ -31,25 +29,16 @@ public class WatermarkPostHandler extends AWatermarkRequestHandler<WatermarkPost
 		@NonNull final WatermarkPostRequest post,
 		@NonNull final Context context
 	) {
-		final SlackLogger slackLogger = SlackLogger.fromConfig(getDefaultConfig(), context.getLogger());
 		final WatermarkLogger logger = new WatermarkLogger(
 			context.getLogger(),
-			slackLogger
+			SlackLogger.fromConfig(getDefaultConfig(), context.getLogger())
 		);
 		try {
 			final WatermarkPostResponse response = handle(requestFromPost(post, logger, context.getAwsRequestId()));
 			if (response == null) {
 				return WatermarkPostResponse.fail("Null response from handler");
-			} else if (response.isSuccess()) {
-				final String outboxUrl = getDefaultConfig().getOutboxUrl();
-				if (outboxUrl != null) {
-					final String outUrl = outboxUrl + response.getDestinationKey();
-					if (slackLogger != null) {
-						slackLogger.send(outUrl, true);
-					} else {
-						logger.info(outUrl);
-					}
-				}
+			} else if (response.getDestinationKey() != null) {
+				logResponse(logger, response);
 			}
 			return response;
 		} catch (Exception e) {
@@ -70,56 +59,6 @@ public class WatermarkPostHandler extends AWatermarkRequestHandler<WatermarkPost
 			Field.overlayAll(postBuilderFromDefaultConfig(), post).build(),
 			requestId
 		);
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForFailedDestinationKey(final @NonNull WatermarkRequest request) {
-		return WatermarkPostResponse.fail("Invalid destination key");
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForFailedWrite(final WatermarkRequest request, final IOException e) {
-		return WatermarkPostResponse.fail("Could not write to destination", e);
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForImpossibleDestination(final @NonNull WatermarkRequest request) {
-		return WatermarkPostResponse.fail("Impossible destination");
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForMinusculeWatermark(final @NonNull WatermarkRequest request) {
-		return WatermarkPostResponse.fail("Watermark would not be visible");
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForMissingBucket(final WatermarkRequest request) {
-		return WatermarkPostResponse.fail("Could not find the specified bucket");
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForMissingSourceImage(final @NonNull WatermarkRequest request) {
-		return WatermarkPostResponse.fail("Source image not found");
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForMissingWatermarkImage(final @NonNull WatermarkRequest request) {
-		return WatermarkPostResponse.fail("Watermark image not found");
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForSkipped(final @NonNull WatermarkRequest request, final String destinationKey) {
-		return WatermarkPostResponse.skipped(destinationKey);
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForSuccess(final WatermarkRequest request, final BufferedImage sourceImage, final String sourceImageFormat, final String destinationKey) {
-		return WatermarkPostResponse.ok(destinationKey);
-	}
-
-	@Override
-	protected WatermarkPostResponse responseForUnknownImageFormat(final BufferedImage sourceImage, final String sourceImageFormat) {
-		return WatermarkPostResponse.fail("Could not parse image file");
 	}
 
 	@SuppressWarnings("unused")

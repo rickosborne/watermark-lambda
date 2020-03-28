@@ -24,16 +24,16 @@ import lombok.Value;
 
 @Getter(value = AccessLevel.PROTECTED)
 @RequiredArgsConstructor
-public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements RequestHandler<RequestT, ResponseT> {
+public abstract class AWatermarkRequestHandler<RequestT> implements RequestHandler<RequestT, WatermarkPostResponse> {
 	private final WatermarkConfig defaultConfig;
-	private final WatermarkImageProcessor imageProcessor;
 	private final WatermarkStore fileStore;
+	private final WatermarkImageProcessor imageProcessor;
 
 	protected AWatermarkRequestHandler() {
 		this(
 			WatermarkConfig.build(),
-			new WatermarkImageProcessor(),
-			WatermarkStoreFactory.buildStore()
+			WatermarkStoreFactory.buildStore(),
+			new WatermarkImageProcessor()
 		);
 	}
 
@@ -123,7 +123,7 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 		return getBufferedImageFromStore(watermarkBucketName, watermarkBucketPath, request);
 	}
 
-	protected ResponseT handle(
+	protected WatermarkPostResponse handle(
 		@NonNull final WatermarkRequest request
 	) {
 		request.getLogger().debug("handle()");
@@ -167,6 +167,19 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 		return writeImageToStore(request, sourceImage, destinationKey, sourceImageFormat);
 	}
 
+	protected void logResponse(final WatermarkLogger logger, final WatermarkPostResponse response) {
+		final SlackLogger slackLogger = logger.getSlackLogger();
+		final String outboxUrl = getDefaultConfig().getOutboxUrl();
+		if (outboxUrl != null) {
+			final String outUrl = outboxUrl + response.getDestinationKey();
+			if (slackLogger != null) {
+				slackLogger.send(outUrl, true);
+			} else {
+				logger.info(outUrl);
+			}
+		}
+	}
+
 	protected WatermarkPostRequest.WatermarkPostRequestBuilder postBuilderFromDefaultConfig() {
 		return WatermarkPostRequest.builder()
 			.destinationBucket(defaultConfig.getOutboxBucketName())
@@ -194,27 +207,47 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 			.watermarkWidthUnit(defaultConfig.getWatermarkWidthUnit());
 	}
 
-	protected abstract ResponseT responseForFailedDestinationKey(@NonNull final WatermarkRequest request);
+	protected WatermarkPostResponse responseForFailedDestinationKey(final @NonNull WatermarkRequest request) {
+		return WatermarkPostResponse.fail("Invalid destination key");
+	}
 
-	protected abstract ResponseT responseForFailedWrite(final WatermarkRequest request, final IOException e);
+	protected WatermarkPostResponse responseForFailedWrite(final WatermarkRequest request, final IOException e) {
+		return WatermarkPostResponse.fail("Could not write to destination", e);
+	}
 
-	protected abstract ResponseT responseForImpossibleDestination(@NonNull final WatermarkRequest request);
+	protected WatermarkPostResponse responseForImpossibleDestination(final @NonNull WatermarkRequest request) {
+		return WatermarkPostResponse.fail("Impossible destination");
+	}
 
-	protected abstract ResponseT responseForMinusculeWatermark(@NonNull final WatermarkRequest request);
+	protected WatermarkPostResponse responseForMinusculeWatermark(final @NonNull WatermarkRequest request) {
+		return WatermarkPostResponse.fail("Watermark would not be visible");
+	}
 
-	protected abstract ResponseT responseForMissingBucket(final WatermarkRequest request);
+	protected WatermarkPostResponse responseForMissingBucket(final WatermarkRequest request) {
+		return WatermarkPostResponse.fail("Could not find the specified bucket");
+	}
 
-	protected abstract ResponseT responseForMissingSourceImage(@NonNull final WatermarkRequest request);
+	protected WatermarkPostResponse responseForMissingSourceImage(final @NonNull WatermarkRequest request) {
+		return WatermarkPostResponse.fail("Source image not found");
+	}
 
-	protected abstract ResponseT responseForMissingWatermarkImage(@NonNull final WatermarkRequest request);
+	protected WatermarkPostResponse responseForMissingWatermarkImage(final @NonNull WatermarkRequest request) {
+		return WatermarkPostResponse.fail("Watermark image not found");
+	}
 
-	protected abstract ResponseT responseForSkipped(@NonNull final WatermarkRequest request, final String resultKey);
+	protected WatermarkPostResponse responseForSkipped(final @NonNull WatermarkRequest request, final String destinationKey) {
+		return WatermarkPostResponse.skipped(destinationKey);
+	}
 
-	protected abstract ResponseT responseForSuccess(final WatermarkRequest request, final BufferedImage sourceImage, final String sourceImageFormat, final String destinationKey);
+	protected WatermarkPostResponse responseForSuccess(final WatermarkRequest request, final BufferedImage sourceImage, final String sourceImageFormat, final String destinationKey) {
+		return WatermarkPostResponse.ok(destinationKey);
+	}
 
-	protected abstract ResponseT responseForUnknownImageFormat(final BufferedImage sourceImage, final String sourceImageFormat);
+	protected WatermarkPostResponse responseForUnknownImageFormat(final BufferedImage sourceImage, final String sourceImageFormat) {
+		return WatermarkPostResponse.fail("Could not parse image file");
+	}
 
-	private ResponseT writeImageToStore(
+	private WatermarkPostResponse writeImageToStore(
 		@NonNull final WatermarkRequest request,
 		@NonNull final BufferedImage sourceImage,
 		@NonNull final String destinationKey,

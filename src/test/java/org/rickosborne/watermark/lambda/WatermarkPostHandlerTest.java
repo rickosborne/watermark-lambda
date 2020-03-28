@@ -1,17 +1,16 @@
 package org.rickosborne.watermark.lambda;
 
-import com.amazonaws.services.s3.model.ObjectMetadata;
 import java.awt.Rectangle;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.List;
-import java.util.function.Consumer;
 import lombok.Getter;
 import lombok.NonNull;
 import org.testng.annotations.Test;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -30,7 +29,7 @@ public class WatermarkPostHandlerTest extends AWatermarkTest {
 	@Test
 	public void handleRequestWorksWithGoodData() {
 		final TestablePostHandler handler = buildHandler();
-		final WatermarkStorage storage = handler.getStorage();
+		final WatermarkStore storage = handler.getFileStore();
 		final WatermarkPostRequest post = WatermarkPostRequest.builder()
 			.sourceBucket(randomString())
 			.sourceKey(randomString() + ".jpg")
@@ -56,15 +55,15 @@ public class WatermarkPostHandlerTest extends AWatermarkTest {
 		doAnswer(inv -> {
 			didDelete.setFlagged(true);
 			return null;
-		}).when(storage).delete(eq(post.getSourceBucket()), eq(post.getSourceKey()));
+		}).when(storage).delete(eq(post.getSourceBucket()), eq(post.getSourceKey()), any());
 		doAnswer(inv -> {
 			didExists.setFlagged(true);
 			return false;
-		}).when(storage).exists(eq(post.getDestinationBucket()), eq(expectedKey));
+		}).when(storage).exists(eq(post.getDestinationBucket()), eq(expectedKey), any());
 		doAnswer(inv -> getWatermarkStream())
-			.when(storage).read(eq(post.getWatermarkBucketName()), eq(post.getWatermarkBucketPath()));
+			.when(storage).read(eq(post.getWatermarkBucketName()), eq(post.getWatermarkBucketPath()), any());
 		doAnswer(inv -> getExampleJpegStream())
-			.when(storage).read(eq(post.getSourceBucket()), eq(post.getSourceKey()));
+			.when(storage).read(eq(post.getSourceBucket()), eq(post.getSourceKey()), any());
 		doAnswer(inv -> {
 			final String actualKey = inv.getArgument(1);
 			assertEquals(actualKey, expectedKey, "destination key");
@@ -76,13 +75,10 @@ public class WatermarkPostHandlerTest extends AWatermarkTest {
 			}
 			assertNotNull(outBytes, "should have output bytes");
 			assertTrue(outBytes.toByteArray().length > 750000, "Expected JPEG bytes > 700000");
-			final Consumer<ObjectMetadata> metadataConfigurer = inv.getArgument(3);
-			final ObjectMetadata metadata = new ObjectMetadata();
-			metadataConfigurer.accept(metadata);
-			assertEquals(metadata.getContentType(), "image/jpeg");
+			assertEquals(inv.getArgument(3), "image/jpeg");
 			didStore.setFlagged(true);
 			return null;
-		}).when(storage).write(eq(post.getDestinationBucket()), any(), any(), any(), eq(true));
+		}).when(storage).write(eq(post.getDestinationBucket()), any(), any(), any(), anyLong(), eq(true), any());
 		final TestableAwsContext context = new TestableAwsContext();
 		final WatermarkPostResponse response = handler.handleRequest(post, context);
 		didStore.assertTrue();
@@ -106,20 +102,20 @@ public class WatermarkPostHandlerTest extends AWatermarkTest {
 	private static class TestablePostHandler extends WatermarkPostHandler {
 		private final WatermarkConfig config;
 		private final TestableImageProcessor imageProcessor;
-		private final WatermarkStorage storage;
+		private final WatermarkStore storage;
 
 		public TestablePostHandler() {
 			this(buildWatermarkConfig());
 		}
 
 		public TestablePostHandler(@NonNull final WatermarkConfig config) {
-			this(config, new TestableImageProcessor(), mock(WatermarkStorage.class));
+			this(config, new TestableImageProcessor(), mock(WatermarkS3Store.class));
 		}
 
 		public TestablePostHandler(
 			@NonNull final WatermarkConfig config,
 			@NonNull final TestableImageProcessor imageProcessor,
-			@NonNull final WatermarkStorage storage
+			@NonNull final WatermarkS3Store storage
 		) {
 			super(config, imageProcessor, storage);
 			this.storage = storage;

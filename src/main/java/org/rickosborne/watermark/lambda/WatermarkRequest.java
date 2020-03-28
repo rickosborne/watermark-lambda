@@ -8,7 +8,7 @@ public class WatermarkRequest {
 	@NonNull
 	WatermarkConfig defaultConfig;
 	@NonNull
-	Lambda2Logger logger;
+	WatermarkLogger logger;
 	@NonNull
 	WatermarkPostRequest requestConfig;
 	@NonNull

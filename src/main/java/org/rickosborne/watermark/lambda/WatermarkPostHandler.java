@@ -3,7 +3,6 @@ package org.rickosborne.watermark.lambda;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import lombok.NonNull;
@@ -15,7 +14,7 @@ public class WatermarkPostHandler extends AWatermarkRequestHandler<WatermarkPost
 	public WatermarkPostHandler(
 		@NonNull final WatermarkConfig defaultConfig,
 		@NonNull final WatermarkImageProcessor imageProcessor,
-		@NonNull final WatermarkStorage storage
+		@NonNull final WatermarkStore storage
 	) {
 		super(defaultConfig, imageProcessor, storage);
 	}
@@ -28,15 +27,41 @@ public class WatermarkPostHandler extends AWatermarkRequestHandler<WatermarkPost
 	}
 
 	@Override
-	public WatermarkPostResponse handleRequest(@NonNull final WatermarkPostRequest post, @NonNull final Context context) {
-		final Lambda2Logger logger = new Lambda2Logger(context.getLogger());
-		return Optional.ofNullable(handle(requestFromPost(post, logger, context.getAwsRequestId())))
-			.orElseGet(() -> WatermarkPostResponse.fail("Null response from handler"));
+	public WatermarkPostResponse handleRequest(
+		@NonNull final WatermarkPostRequest post,
+		@NonNull final Context context
+	) {
+		final SlackLogger slackLogger = SlackLogger.fromConfig(getDefaultConfig(), context.getLogger());
+		final WatermarkLogger logger = new WatermarkLogger(
+			context.getLogger(),
+			slackLogger
+		);
+		try {
+			final WatermarkPostResponse response = handle(requestFromPost(post, logger, context.getAwsRequestId()));
+			if (response == null) {
+				return WatermarkPostResponse.fail("Null response from handler");
+			} else if (response.isSuccess()) {
+				final String outboxUrl = getDefaultConfig().getOutboxUrl();
+				if (outboxUrl != null) {
+					final String outUrl = outboxUrl + response.getDestinationKey();
+					if (slackLogger != null) {
+						slackLogger.send(outUrl, true);
+					} else {
+						logger.info(outUrl);
+					}
+				}
+			}
+			return response;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("Caught exception", e);
+			return WatermarkPostResponse.fail(e.getMessage());
+		}
 	}
 
 	protected WatermarkRequest requestFromPost(
 		@NonNull final WatermarkPostRequest post,
-		@NonNull final Lambda2Logger logger,
+		@NonNull final WatermarkLogger logger,
 		@NonNull final String requestId
 	) {
 		return new WatermarkRequest(
@@ -101,10 +126,18 @@ public class WatermarkPostHandler extends AWatermarkRequestHandler<WatermarkPost
 	enum Field {
 		DEST_BUCKET(WatermarkPostRequest::getDestinationBucket, WatermarkPostRequest.WatermarkPostRequestBuilder::destinationBucket),
 		DEST_PATH(WatermarkPostRequest::getDestinationKey, WatermarkPostRequest.WatermarkPostRequestBuilder::destinationKey),
+		DEST_URL(WatermarkPostRequest::getDestinationUrl, WatermarkPostRequest.WatermarkPostRequestBuilder::destinationUrl),
 		PUB_DEST(WatermarkPostRequest::getPublicDestination, WatermarkPostRequest.WatermarkPostRequestBuilder::publicDestination),
 		REMOVE_ON_SUCCESS(WatermarkPostRequest::getRemoveSourceOnSuccess, WatermarkPostRequest.WatermarkPostRequestBuilder::removeSourceOnSuccess),
 		RENAME_KEY(WatermarkPostRequest::getRenameKeyLength, WatermarkPostRequest.WatermarkPostRequestBuilder::renameKeyLength),
 		SKIP_IF_PRESENT(WatermarkPostRequest::getSkipIfPresent, WatermarkPostRequest.WatermarkPostRequestBuilder::skipIfPresent),
+		SLACK_APPID(WatermarkPostRequest::getSlackAppId, WatermarkPostRequest.WatermarkPostRequestBuilder::slackAppId),
+		SLACK_BOTOAUTH(WatermarkPostRequest::getSlackBotOauth, WatermarkPostRequest.WatermarkPostRequestBuilder::slackBotOauth),
+		SLACK_CLIENTID(WatermarkPostRequest::getSlackClientId, WatermarkPostRequest.WatermarkPostRequestBuilder::slackClientId),
+		SLACK_OAUTH(WatermarkPostRequest::getSlackOauth, WatermarkPostRequest.WatermarkPostRequestBuilder::slackOauth),
+		SLACK_SIGNSEC(WatermarkPostRequest::getSlackSigningSecret, WatermarkPostRequest.WatermarkPostRequestBuilder::slackSigningSecret),
+		SLACK_TOKEN(WatermarkPostRequest::getSlackToken, WatermarkPostRequest.WatermarkPostRequestBuilder::slackToken),
+		SLACK_VERTOKEN(WatermarkPostRequest::getSlackVerificationToken, WatermarkPostRequest.WatermarkPostRequestBuilder::slackVerificationToken),
 		SOURCE_BUCKET(WatermarkPostRequest::getSourceBucket, WatermarkPostRequest.WatermarkPostRequestBuilder::sourceBucket),
 		SOURCE_KEY(WatermarkPostRequest::getSourceKey, WatermarkPostRequest.WatermarkPostRequestBuilder::sourceKey),
 		WM_BOTTOM(WatermarkPostRequest::getWatermarkBottom, WatermarkPostRequest.WatermarkPostRequestBuilder::watermarkBottom),

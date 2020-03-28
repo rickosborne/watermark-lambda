@@ -22,7 +22,7 @@ public class WatermarkS3EventHandler extends AWatermarkRequestHandler<com.amazon
 
 	protected WatermarkPostRequest configFromS3Event(
 		@NonNull final S3EventNotification.S3EventNotificationRecord notification,
-		@NonNull final Lambda2Logger logger,
+		@NonNull final WatermarkLogger logger,
 		@NonNull final String requestId
 	) {
 		final S3EventNotification.S3Entity s3Entity = notification.getS3();
@@ -48,11 +48,15 @@ public class WatermarkS3EventHandler extends AWatermarkRequestHandler<com.amazon
 
 	@Override
 	public Void handleRequest(@NonNull final com.amazonaws.services.lambda.runtime.events.S3Event input, @NonNull final Context context) {
-		final Lambda2Logger logger = new Lambda2Logger(context.getLogger());
+		final WatermarkLogger logger = new WatermarkLogger(
+			context.getLogger(),
+			SlackLogger.fromConfig(getDefaultConfig(), context.getLogger())
+		);
 		final String requestId = context.getAwsRequestId();
 		for (final S3EventNotification.S3EventNotificationRecord notification : input.getRecords()) {
 			final WatermarkPostRequest requestConfig = configFromS3Event(notification, logger, requestId);
 			logger.debug(requestConfig.toString());
+			//noinspection ConstantConditions
 			if (requestConfig != null) {
 				return handle(
 					new WatermarkRequest(

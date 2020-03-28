@@ -13,7 +13,9 @@ public class WatermarkImageProcessor {
 		@NonNull final Rectangle destination,
 		@NonNull final WatermarkPostRequest requestConfig
 	) {
-		final Graphics2D graphics = (Graphics2D) sourceImage.getGraphics();
+		final JpegRotator.RotationResult rotationResult = new JpegRotator().rotateIfNecessary(sourceImage);
+		final BufferedImage rotated = rotationResult.getUpdatedImage();
+		final Graphics2D graphics = (Graphics2D) rotated.getGraphics();
 		final AlphaComposite alphaComposite = AlphaComposite
 			.getInstance(AlphaComposite.SRC_OVER, requestConfig.getWatermarkOpacityOrDefault());
 		graphics.setComposite(alphaComposite);

@@ -4,8 +4,7 @@ import java.io.InputStream;
 
 public abstract class AWatermarkTest {
 	public static WatermarkConfig buildWatermarkConfig() {
-		return WatermarkConfig.builder()
-			.build();
+		return WatermarkConfig.build();
 	}
 
 	public static InputStream getWatermarkStream() {

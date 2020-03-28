@@ -22,4 +22,11 @@ public enum MeasureUnit {
 		}
 		throw new IllegalArgumentException("Not a MeasureUnit");
 	}
+
+	public static class Converter implements IParamConverter<MeasureUnit> {
+		@Override
+		public MeasureUnit convert(final String value) {
+			return fromString(value);
+		}
+	}
 }

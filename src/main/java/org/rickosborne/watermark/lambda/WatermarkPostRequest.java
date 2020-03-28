@@ -18,10 +18,18 @@ public class WatermarkPostRequest {
 
 	private String destinationBucket;
 	private String destinationKey;
+	private String destinationUrl;
 	private Boolean publicDestination;
 	private Boolean removeSourceOnSuccess;
 	private Integer renameKeyLength;
 	private Boolean skipIfPresent;
+	private String slackAppId;
+	private String slackBotOauth;
+	private String slackClientId;
+	private String slackOauth;
+	private String slackSigningSecret;
+	private String slackToken;
+	private String slackVerificationToken;
 	private String sourceBucket;
 	private String sourceKey;
 	private Integer watermarkBottom;

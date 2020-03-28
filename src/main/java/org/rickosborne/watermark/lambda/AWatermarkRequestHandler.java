@@ -27,23 +27,27 @@ import lombok.Value;
 public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements RequestHandler<RequestT, ResponseT> {
 	private final WatermarkConfig defaultConfig;
 	private final WatermarkImageProcessor imageProcessor;
-	private final WatermarkStorage storage;
+	private final WatermarkStore fileStore;
 
 	protected AWatermarkRequestHandler() {
 		this(
 			WatermarkConfig.build(),
 			new WatermarkImageProcessor(),
-			new WatermarkStorage()
+			WatermarkStoreFactory.buildStore()
 		);
 	}
 
-	private Pair<BufferedImage, String> getBufferedImageFromS3(
+	private Pair<BufferedImage, String> getBufferedImageFromStore(
 		@NonNull final String bucketName,
 		@NonNull final String bucketPath,
 		@NonNull final WatermarkRequest request
 	) {
+		request.getLogger().debug(String.format("getBufferedImageFromStore(%s, %s)", bucketName, bucketPath));
 		try {
-			final InputStream imageIn = storage.read(bucketName, bucketPath);
+			final InputStream imageIn = fileStore.read(bucketName, bucketPath, request.getLogger());
+			if (imageIn == null) {
+				return null;
+			}
 			final ImageInputStream imageInputStream = ImageIO.createImageInputStream(imageIn);
 			final ImageReader imageReader = ImageIO.getImageReaders(imageInputStream).next();
 			final BufferedImage image = ImageIO.read(imageInputStream);
@@ -60,6 +64,7 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 		@NonNull final BufferedImage sourceImage,
 		@NonNull final String sourceImageFormat
 	) {
+		request.getLogger().debug(String.format("getDestinationKey(%s)", sourceImageFormat));
 		final WatermarkPostRequest requestConfig = request.getRequestConfig();
 		final Integer renameKeyLength = requestConfig.getRenameKeyLength();
 		final String destinationKey = requestConfig.getDestinationKey();
@@ -69,11 +74,10 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 				try (final DigestOutputStream bytesOut = new DigestOutputStream(OutputStream.nullOutputStream(), digest)) {
 					if (ImageIO.write(sourceImage, "bmp", bytesOut)) {
 						final byte[] hashBytes = digest.digest();
-						final String base64Hash = Base64.getMimeEncoder().encodeToString(hashBytes);
+						final String base64Hash = Base64.getUrlEncoder().encodeToString(hashBytes);
 						final String key = (renameKeyLength >= base64Hash.length()
 							? base64Hash
 							: base64Hash.substring(0, renameKeyLength))
-							.replace("+", "")
 							.replace("=", "");
 						return destinationKey == null ? key : (destinationKey + key + "." + sourceImageFormat.toLowerCase());
 					}
@@ -95,6 +99,7 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 	}
 
 	private Pair<BufferedImage, String> getSourceImageStream(@NonNull final WatermarkRequest request) {
+		request.getLogger().debug("getSourceImageStream()");
 		final WatermarkPostRequest config = request.getRequestConfig();
 		final String sourceBucket = config.getSourceBucket();
 		final String sourceKey = config.getSourceKey();
@@ -102,7 +107,7 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 			request.getLogger().error("No source bucket/path provided");
 			return null;
 		}
-		return getBufferedImageFromS3(sourceBucket, sourceKey, request);
+		return getBufferedImageFromStore(sourceBucket, sourceKey, request);
 	}
 
 	private Pair<BufferedImage, String> getWatermarkImageStream(
@@ -115,12 +120,13 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 			request.getLogger().error("No watermark bucket/path provided");
 			return null;
 		}
-		return getBufferedImageFromS3(watermarkBucketName, watermarkBucketPath, request);
+		return getBufferedImageFromStore(watermarkBucketName, watermarkBucketPath, request);
 	}
 
 	protected ResponseT handle(
 		@NonNull final WatermarkRequest request
 	) {
+		request.getLogger().debug("handle()");
 		final Pair<BufferedImage, String> sourceImagePair = getSourceImageStream(request);
 		if (sourceImagePair == null) {
 			request.getLogger().error("Could not resolve source image");
@@ -139,7 +145,7 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 			request.getLogger().error("Missing destination bucket");
 			return responseForMissingBucket(request);
 		}
-		if (requestConfig.isSkipIfPresentOrDefault() && storage.exists(destinationBucket, destinationKey)) {
+		if (requestConfig.isSkipIfPresentOrDefault() && fileStore.exists(destinationBucket, destinationKey, request.getLogger())) {
 			request.getLogger().info("Skipping because destination exists: " + destinationBucket + ":" + destinationKey);
 			return responseForSkipped(request, destinationKey);
 		}
@@ -158,7 +164,7 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 			return responseForMinusculeWatermark(request);
 		}
 		imageProcessor.watermark(sourceImage, watermarkImage, destination, requestConfig);
-		return writeImageToS3(request, sourceImage, destinationKey, sourceImageFormat);
+		return writeImageToStore(request, sourceImage, destinationKey, sourceImageFormat);
 	}
 
 	protected WatermarkPostRequest.WatermarkPostRequestBuilder postBuilderFromDefaultConfig() {
@@ -208,12 +214,13 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 
 	protected abstract ResponseT responseForUnknownImageFormat(final BufferedImage sourceImage, final String sourceImageFormat);
 
-	private ResponseT writeImageToS3(
+	private ResponseT writeImageToStore(
 		@NonNull final WatermarkRequest request,
 		@NonNull final BufferedImage sourceImage,
 		@NonNull final String destinationKey,
 		@NonNull final String sourceImageFormat
 	) {
+		request.getLogger().debug(String.format("writeImageToStore(%s, %s)", destinationKey, sourceImageFormat));
 		@NonNull final WatermarkPostRequest requestConfig = request.getRequestConfig();
 		final String destinationBucket = requestConfig.getDestinationBucket();
 		if (destinationBucket == null) {
@@ -225,15 +232,18 @@ public abstract class AWatermarkRequestHandler<RequestT, ResponseT> implements R
 				request.getLogger().error("Unknown image format: " + sourceImageFormat);
 				return responseForUnknownImageFormat(sourceImage, sourceImageFormat);
 			}
-			storage.write(
+			final long contentLength = outBytes.size();
+			fileStore.write(
 				destinationBucket,
 				destinationKey,
 				outBytes,
-				m -> m.setContentType("image/" + sourceImageFormat.toLowerCase()),
-				requestConfig.isPublicDestinationOrDefault()
+				"image/" + sourceImageFormat.toLowerCase(),
+				contentLength,
+				requestConfig.isPublicDestinationOrDefault(),
+				request.getLogger()
 			);
 			if (requestConfig.isRemoveSourceOnSuccessOrDefault()) {
-				storage.delete(requestConfig.getSourceBucket(), requestConfig.getSourceKey());
+				fileStore.delete(requestConfig.getSourceBucket(), requestConfig.getSourceKey(), request.getLogger());
 			}
 			return responseForSuccess(request, sourceImage, sourceImageFormat, destinationKey);
 		} catch (IOException e) {
